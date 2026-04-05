@@ -1,0 +1,231 @@
+{
+  "name": "AI Quality Assurance (QA) Inspector",
+  "description": "An automated computer vision pipeline that uses Telegram, n8n, Google Gemini Vision, and Google Sheets to allow warehouse workers to instantly log product damage by taking a photo.",
+  "license": "MIT",
+  "copyright": "Copyright (c) 2026 Pacho-hash",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "id": "20f6fd38-4341-4046-ba40-b6c6c1101d7a",
+      "name": "Telegram Trigger (Photo)",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        640,
+        -16
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "file",
+        "fileId": "={{ $json.message.photo[0].file_id }}",
+        "additionalFields": {}
+      },
+      "id": "15c911e9-6486-4ebe-b2b9-29ba9fd2a057",
+      "name": "Download Image",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        816,
+        -16
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "let i = 0;\nfor (let item of $input.all()) {\n  // Pull the image off n8n's hard drive into memory\n  const buffer = await this.helpers.getBinaryDataBuffer(i, 'data');\n  // Convert it into a Base64 text string for Gemini\n  item.json.base64Image = buffer.toString('base64');\n  i++;\n}\nreturn $input.all();"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        -16
+      ],
+      "id": "05e687fa-91c1-43ad-90ea-410d71d428d7",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=YOUR_GEMINI_API_KEY_HERE",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"contents\": [\n    {\n      \"parts\": [\n        {\n          \"text\": \"You are a QA inspector. Look at this image of a package/product. Reply with ONLY a valid JSON object in this exact format: {\\\"category\\\": \\\"(e.g. Water Damage, Crushed, Intact)\\\", \\\"summary\\\": \\\"(Short 1 sentence description)\\\"}\"\n        },\n        {\n          \"inline_data\": {\n            \"mime_type\": \"{{ $binary.data.mimeType }}\",\n            \"data\": \"{{ $json.base64Image }}\"\n          }\n        }\n      ]\n    }\n  ]\n}",
+        "options": {}
+      },
+      "id": "2cdbee29-8270-4405-8104-f2e69b1b7046",
+      "name": "Gemini Vision Analysis",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        1232,
+        -16
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_URL_HERE",
+          "mode": "url"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Sheet1",
+          "cachedResultUrl": "YOUR_GOOGLE_SHEET_URL_HERE"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Report ID": "={{ $execution.id }}",
+            "Date": "={{ $now }}",
+            "Damage Category": "={{ JSON.parse($('Gemini Vision Analysis').item.json.candidates[0].content.parts[0].text.replace(/```json/gi, '').replace(/```/g, '')).category }}",
+            "AI Summary": "={{ JSON.parse($('Gemini Vision Analysis').item.json.candidates[0].content.parts[0].text.replace(/```json/gi, '').replace(/```/g, '')).summary }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Report ID",
+              "displayName": "Report ID",
+              "type": "string"
+            },
+            {
+              "id": "Date",
+              "displayName": "Date",
+              "type": "string"
+            },
+            {
+              "id": "Damage Category",
+              "displayName": "Damage Category",
+              "type": "string"
+            },
+            {
+              "id": "AI Summary",
+              "displayName": "AI Summary",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "300609b0-1149-407d-85fb-25d7e56805c5",
+      "name": "Save to Database",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.3,
+      "position": [
+        1456,
+        -16
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "",
+          "name": "Google Sheets OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger (Photo)').item.json.message.chat.id }}",
+        "text": "=✅ QA Report Logged Successfully!\n\n**Category:** {{ JSON.parse($('Gemini Vision Analysis').item.json.candidates[0].content.parts[0].text.replace(/```json/gi, '').replace(/```/g, '')).category }}\n**Details:** {{ JSON.parse($('Gemini Vision Analysis').item.json.candidates[0].content.parts[0].text.replace(/```json/gi, '').replace(/```/g, '')).summary }}\n\n*Saved to ERP Database.*",
+        "additionalFields": {}
+      },
+      "id": "3c930f2d-1566-4abf-a5f3-54b2553857f6",
+      "name": "Reply to Worker",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1664,
+        -16
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "",
+          "name": "Telegram account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Telegram Trigger (Photo)": {
+      "main": [
+        [
+          {
+            "node": "Download Image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Image": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Gemini Vision Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini Vision Analysis": {
+      "main": [
+        [
+          {
+            "node": "Save to Database",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save to Database": {
+      "main": [
+        [
+          {
+            "node": "Reply to Worker",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "tags": []
+}
